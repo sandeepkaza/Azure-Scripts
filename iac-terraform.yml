@@ -1,0 +1,112 @@
+name: IaC - Terraform (Azure)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'Terraform/**'
+      - 'tf/**'
+      - '**/*.tf'
+  pull_request:
+    paths:
+      - 'Terraform/**'
+      - 'tf/**'
+      - '**/*.tf'
+  workflow_dispatch:
+
+jobs:
+  terraform:
+    name: Terraform plan / apply
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      TF_WORKING_DIR: Terraform
+      BACKEND_RG: ${{ secrets.BACKEND_RG }}
+      BACKEND_STORAGE_ACCOUNT: ${{ secrets.BACKEND_STORAGE_ACCOUNT }}
+      BACKEND_CONTAINER: ${{ secrets.BACKEND_CONTAINER }}
+      BACKEND_LOCATION: ${{ secrets.BACKEND_LOCATION || 'eastus' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.5.7'
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure backend storage (optional)
+        if: ${{ env.BACKEND_STORAGE_ACCOUNT != '' }}
+        run: |
+          echo "Creating resource group if missing: $BACKEND_RG"
+          az group create -n "$BACKEND_RG" -l "$BACKEND_LOCATION" || true
+          echo "Creating storage account if missing: $BACKEND_STORAGE_ACCOUNT"
+          az storage account create -n "$BACKEND_STORAGE_ACCOUNT" -g "$BACKEND_RG" -l "$BACKEND_LOCATION" --sku Standard_LRS || true
+          KEY=$(az storage account keys list -g "$BACKEND_RG" -n "$BACKEND_STORAGE_ACCOUNT" --query '[0].value' -o tsv)
+          echo "Creating container if missing: $BACKEND_CONTAINER"
+          az storage container create --name "$BACKEND_CONTAINER" --account-name "$BACKEND_STORAGE_ACCOUNT" --account-key "$KEY" || true
+          echo "BACKEND_KEY=state.tfstate" >> $GITHUB_ENV
+
+
+      - name: Select Terraform working directory
+        run: echo "TF_WORKING_DIR=${{ env.TF_WORKING_DIR }}" >> $GITHUB_ENV
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          if [ -n "${BACKEND_STORAGE_ACCOUNT}" ]; then
+            terraform init -input=false -backend-config="resource_group_name=${BACKEND_RG}" -backend-config="storage_account_name=${BACKEND_STORAGE_ACCOUNT}" -backend-config="container_name=${BACKEND_CONTAINER}" -backend-config="key=${BACKEND_KEY}"
+          else
+            terraform init -input=false
+          fi
+
+      - name: Terraform validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate || true
+
+      - name: Terraform plan
+        id: tfplan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Upload plan (artifact)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
+
+      - name: Show plan file (create plan.txt)
+        if: ${{ always() }}
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform show -no-color tfplan > plan.txt || true
+
+      - name: Post plan as PR comment
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            (async () => {
+              const planPath = `${process.env.TF_WORKING_DIR}/plan.txt`;
+              const body = fs.existsSync(planPath) ? fs.readFileSync(planPath, 'utf8') : 'No plan available.';
+              const max = 64000;
+              const content = body.length > max ? body.slice(0,max) + '\n\n---\n(Plan truncated)' : body;
+              const issue_number = context.issue.number;
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number, body: '```\n' + content + '\n```' });
+            })();
+
+      - name: Terraform apply (manual runs only)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve tfplan

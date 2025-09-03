@@ -1,0 +1,47 @@
+name: Terraform Backend Bootstrap (Azure)
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_rg:
+        description: 'Resource group name for backend'
+        required: true
+        type: string
+      backend_location:
+        description: 'Location for backend resources'
+        required: true
+        type: string
+        default: 'eastus'
+      backend_storage_account:
+        description: 'Storage account name for backend'
+        required: true
+        type: string
+      backend_container:
+        description: 'Container name for backend'
+        required: true
+        type: string
+        default: 'tfstate'
+
+jobs:
+  create-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Create resource group
+        run: |
+          az group create -n ${{ inputs.backend_rg }} -l ${{ inputs.backend_location }}
+
+      - name: Create storage account
+        run: |
+          az storage account create -n ${{ inputs.backend_storage_account }} -g ${{ inputs.backend_rg }} -l ${{ inputs.backend_location }} --sku Standard_LRS
+
+      - name: Create container
+        run: |
+          KEY=$(az storage account keys list -g ${{ inputs.backend_rg }} -n ${{ inputs.backend_storage_account }} --query '[0].value' -o tsv)
+          az storage container create --name ${{ inputs.backend_container }} --account-name ${{ inputs.backend_storage_account }} --account-key $KEY
