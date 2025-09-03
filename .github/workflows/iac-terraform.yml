@@ -4,13 +4,11 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'Terraform/**'
-      - 'tf/**'
+      - 'infra/**'
       - '**/*.tf'
   pull_request:
     paths:
-      - 'Terraform/**'
-      - 'tf/**'
+      - 'infra/**'
       - '**/*.tf'
   workflow_dispatch:
 
@@ -26,7 +24,7 @@ jobs:
         shell: bash
 
     env:
-      TF_WORKING_DIR: Terraform
+      TF_WORKING_DIR: infra
       BACKEND_RG: ${{ secrets.BACKEND_RG }}
       BACKEND_STORAGE_ACCOUNT: ${{ secrets.BACKEND_STORAGE_ACCOUNT }}
       BACKEND_CONTAINER: ${{ secrets.BACKEND_CONTAINER }}
