@@ -57,8 +57,12 @@ jobs:
         run: |
           echo "Creating resource group if missing: $BACKEND_RG"
           az group create -n "$BACKEND_RG" -l "$BACKEND_LOCATION" || true
-          echo "Creating storage account if missing: $BACKEND_STORAGE_ACCOUNT"
-          az storage account create -n "$BACKEND_STORAGE_ACCOUNT" -g "$BACKEND_RG" -l "$BACKEND_LOCATION" --sku Standard_LRS || true
+          echo "Checking/creating storage account: $BACKEND_STORAGE_ACCOUNT"
+          if az storage account show -n "$BACKEND_STORAGE_ACCOUNT" -g "$BACKEND_RG" --query "name" -o tsv 2>/dev/null; then
+            echo "Storage account already exists"
+          else
+            az storage account create -n "$BACKEND_STORAGE_ACCOUNT" -g "$BACKEND_RG" -l "$BACKEND_LOCATION" --sku Standard_LRS
+          fi
           KEY=$(az storage account keys list -g "$BACKEND_RG" -n "$BACKEND_STORAGE_ACCOUNT" --query '[0].value' -o tsv)
           echo "Creating container if missing: $BACKEND_CONTAINER"
           az storage container create --name "$BACKEND_CONTAINER" --account-name "$BACKEND_STORAGE_ACCOUNT" --account-key "$KEY" || true
