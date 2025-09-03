@@ -84,7 +84,7 @@ resource "azurerm_key_vault" "kv" {
   soft_delete_retention_days  = 7
   purge_protection_enabled    = false
   sku_name                    = "standard"
-  enable_rbac_authorization   = true
+  rbac_authorization_enabled = true
 }
 
 resource "azurerm_role_assignment" "kv_officer" {
@@ -194,7 +194,7 @@ resource "azurerm_container_app" "ca" {
 }
 
 resource "azapi_resource_action" "cors" {
-  type        = "Microsoft.App/containerApps"
+  type        = "Microsoft.App/containerApps@2023-05-01"
   resource_id = azurerm_container_app.ca.id
   method      = "PATCH"
   body = {
