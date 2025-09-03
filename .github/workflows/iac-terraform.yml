@@ -2,14 +2,17 @@ name: IaC - Terraform (Azure)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
     paths:
       - 'infra/**'
       - '**/*.tf'
+      - 'environments/**'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'infra/**'
       - '**/*.tf'
+      - 'environments/**'
   workflow_dispatch:
     inputs:
       environment:
@@ -38,6 +41,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      pull-requests: write
     defaults:
       run:
         shell: bash
@@ -52,6 +56,43 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Determine environment and action
+        id: env-action
+        run: |
+          # Set default values
+          ENVIRONMENT="dev"
+          ACTION="plan"
+
+          # For pull requests, always use dev environment and plan action
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            ENVIRONMENT="dev"
+            ACTION="plan"
+          # For push to main/master, determine environment from commit message
+          elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            if [[ "$GITHUB_REF_NAME" == "main" || "$GITHUB_REF_NAME" == "master" ]]; then
+              if git log -1 --pretty=%B | grep -q "\[prod\]"; then
+                ENVIRONMENT="prod"
+              elif git log -1 --pretty=%B | grep -q "\[staging\]"; then
+                ENVIRONMENT="staging"
+              else
+                ENVIRONMENT="dev"
+              fi
+              ACTION="apply"
+            fi
+          # For manual workflow dispatch, use inputs
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            ENVIRONMENT="$INPUT_ENVIRONMENT"
+            ACTION="$INPUT_ACTION"
+          fi
+
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "action=$ACTION" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          INPUT_ENVIRONMENT: ${{ inputs.environment }}
+          INPUT_ACTION: ${{ inputs.action }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -112,7 +153,14 @@ jobs:
       - name: Terraform plan
         id: tfplan
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform plan -var-file=environments/${{ inputs.environment }}/terraform.tfvars.json -out=tfplan -input=false
+        run: |
+          # Ensure environment is set, default to dev if empty
+          ENV="${{ steps.env-action.outputs.environment }}"
+          if [[ -z "$ENV" ]]; then
+            ENV="dev"
+          fi
+          echo "Using environment: $ENV"
+          terraform plan -var-file="environments/$ENV/terraform.tfvars.json" -out=tfplan -input=false
 
       - name: Upload plan (artifact)
         if: ${{ always() }}
@@ -126,27 +174,52 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform show -no-color tfplan > plan.txt || true
 
-      - name: Post plan as PR comment
-        if: ${{ github.event_name == 'pull_request' }}
+      - name: Update Pull Request
         uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        env:
+          ENVIRONMENT: ${{ steps.env-action.outputs.environment }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            (async () => {
-              const planPath = `${process.env.TF_WORKING_DIR}/plan.txt`;
-              const body = fs.existsSync(planPath) ? fs.readFileSync(planPath, 'utf8') : 'No plan available.';
-              const max = 64000;
-              const content = body.length > max ? body.slice(0,max) + '\n\n---\n(Plan truncated)' : body;
-              const issue_number = context.issue.number;
-              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number, body: '```\n' + content + '\n```' });
-            })();
+            const planPath = process.env.TF_WORKING_DIR + '/plan.txt';
+            const planContent = fs.existsSync(planPath) ? fs.readFileSync(planPath, 'utf8') : 'No plan available.';
+            const maxLength = 64000;
+            const content = planContent.length > maxLength ? planContent.slice(0, maxLength) + '\n\n---\n(Plan truncated)' : planContent;
 
-      - name: Terraform apply (manual runs only)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'apply' }}
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform apply -auto-approve tfplan
+            const output = '## 🚀 Terraform Plan Results\n\n' +
+              '**Environment:** `' + process.env.ENVIRONMENT + '`\n' +
+              '**Status:** ✅ Plan generated successfully\n\n' +
+              '### 📋 Plan Summary\n' +
+              '```terraform\n' + content + '\n```\n\n' +
+              '### 🔍 Details\n' +
+              '- **Triggered by:** @' + process.env.GITHUB_ACTOR + '\n' +
+              '- **Branch:** `' + process.env.GITHUB_HEAD_REF + '`\n' +
+              '- **Action:** Plan only (merge to deploy)\n\n' +
+              '---\n' +
+              '*This plan will be applied when the PR is merged to main/master branch.*';
 
-      - name: Terraform destroy (manual runs only)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'destroy' }}
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Terraform apply (on push to main/master)
+        if: ${{ github.event_name == 'push' && steps.env-action.outputs.action == 'apply' }}
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform destroy -var-file=environments/${{ inputs.environment }}/terraform.tfvars.json -auto-approve
+        run: terraform apply -var-file=environments/${{ steps.env-action.outputs.environment }}/terraform.tfvars.json -auto-approve tfplan
+
+      - name: Terraform apply (manual)
+        if: ${{ github.event_name == 'workflow_dispatch' && steps.env-action.outputs.action == 'apply' }}
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -var-file=environments/${{ steps.env-action.outputs.environment }}/terraform.tfvars.json -auto-approve tfplan
+
+      - name: Terraform destroy
+        if: ${{ steps.env-action.outputs.action == 'destroy' }}
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform destroy -var-file=environments/${{ steps.env-action.outputs.environment }}/terraform.tfvars.json -auto-approve
