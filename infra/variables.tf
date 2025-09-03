@@ -18,15 +18,3 @@ variable "tenant_id" {
   description = "Azure Tenant ID"
   type        = string
 }
-
-variable "environment_name" {
-  description = "Environment name"
-  type        = string
-  default     = "dev"
-}
-
-variable "location" {
-  description = "Azure region"
-  type        = string
-  default     = "eastus"
-}
