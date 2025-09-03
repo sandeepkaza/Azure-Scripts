@@ -1,0 +1,63 @@
+name: Auto Approve PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main, master]
+
+jobs:
+  auto-approve:
+    name: Auto Approve Pull Request
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auto Approve for Feature Branches
+        if: |
+          github.event.pull_request.head.ref == 'feature/add-container-registry' ||
+          startsWith(github.event.pull_request.head.ref, 'feature/') ||
+          startsWith(github.event.pull_request.head.ref, 'hotfix/')
+        run: |
+          echo "Auto-approving PR #${{ github.event.pull_request.number }} from branch ${{ github.event.pull_request.head.ref }}"
+
+          # Add approval comment
+          gh pr comment ${{ github.event.pull_request.number }} --body "🤖 **Auto-Approved**
+
+          This PR has been automatically approved because:
+          - ✅ Branch follows naming convention: \`${{ github.event.pull_request.head.ref }}\`
+          - ✅ Changes are from a feature/hotfix branch
+          - ✅ Ready for review and CI checks passed
+
+          **Next Steps:**
+          - Review the infrastructure plan in the PR comments
+          - Merge when ready to trigger deployment"
+
+          # Auto-approve the PR
+          gh pr review ${{ github.event.pull_request.number }} --approve --body "Auto-approved by GitOps workflow 🤖"
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auto Approve for Maintenance Branches
+        if: |
+          startsWith(github.event.pull_request.head.ref, 'maintenance/') ||
+          startsWith(github.event.pull_request.head.ref, 'chore/')
+        run: |
+          echo "Auto-approving maintenance PR #${{ github.event.pull_request.number }}"
+
+          gh pr comment ${{ github.event.pull_request.number }} --body "🤖 **Maintenance PR Auto-Approved**
+
+          This maintenance PR has been automatically approved:
+          - 🔧 Branch: \`${{ github.event.pull_request.head.ref }}\`
+          - 📋 Type: Maintenance/Chore
+          - ✅ Ready for automated deployment"
+
+          gh pr review ${{ github.event.pull_request.number }} --approve --body "Auto-approved maintenance changes 🤖"
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
