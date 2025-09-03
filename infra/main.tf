@@ -216,11 +216,3 @@ resource "azapi_resource_action" "cors" {
     }
   }
 }
-
-variable "environment_name" {
-  type = string
-}
-
-variable "location" {
-  type = string
-}
