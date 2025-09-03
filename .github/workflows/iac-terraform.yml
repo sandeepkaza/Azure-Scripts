@@ -95,7 +95,7 @@ jobs:
       - name: Terraform plan
         id: tfplan
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform plan -out=tfplan -input=false
+        run: terraform plan -var-file=main.tfvars.json -out=tfplan -input=false
 
       - name: Upload plan (artifact)
         if: ${{ always() }}
@@ -127,4 +127,4 @@ jobs:
       - name: Terraform apply (manual runs only)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -var-file=main.tfvars.json -auto-approve tfplan
