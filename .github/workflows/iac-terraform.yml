@@ -12,6 +12,15 @@ on:
       - '**/*.tf'
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Select environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
       action:
         description: 'Choose action: plan, apply, or destroy'
         required: true
@@ -103,7 +112,7 @@ jobs:
       - name: Terraform plan
         id: tfplan
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform plan -var-file=main.tfvars.json -out=tfplan -input=false
+        run: terraform plan -var-file=environments/${{ inputs.environment }}/terraform.tfvars.json -out=tfplan -input=false
 
       - name: Upload plan (artifact)
         if: ${{ always() }}
@@ -140,4 +149,4 @@ jobs:
       - name: Terraform destroy (manual runs only)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'destroy' }}
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform destroy -var-file=main.tfvars.json -auto-approve
+        run: terraform destroy -var-file=environments/${{ inputs.environment }}/terraform.tfvars.json -auto-approve
