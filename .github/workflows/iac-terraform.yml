@@ -11,6 +11,16 @@ on:
       - 'infra/**'
       - '**/*.tf'
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Choose action: plan, apply, or destroy'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
 
 jobs:
   terraform:
@@ -123,6 +133,11 @@ jobs:
             })();
 
       - name: Terraform apply (manual runs only)
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'apply' }}
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -auto-approve tfplan
+
+      - name: Terraform destroy (manual runs only)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'destroy' }}
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform destroy -var-file=main.tfvars.json -auto-approve
